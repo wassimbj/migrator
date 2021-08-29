@@ -9,7 +9,6 @@ import (
 
 	// "github.com/jackc/pgx/pgtype"
 
-	"github.com/georgysavva/scany/pgxscan"
 	"github.com/jackc/pgx/v4/pgxpool"
 )
 
@@ -27,22 +26,30 @@ func Init(conn *pgxpool.Pool) *Migrator {
 	}
 }
 
-/*
-	TODO: complete the  logic
-*/
 // https://www.postgresql.org/docs/9.5/datatype.html#DATATYPE-TABLE
-func GetPgType(goType string) string {
-	if goType == "string" {
+// convert Golang types to Postgres types;
+// e.g: string => varchar
+func GoToPgType(mtype string) string {
+	switch mtype {
+	case "string":
 		return "varchar"
-	} else if goType == "int" || goType == "int8" || goType == "int32" {
-		return "int"
-	} else if goType == "int64" {
+	case "int64":
 		return "bigint"
-	} else if goType == "struct{}" {
-		return "json"
+	case "int", "int8", "int16", "int32":
+		return "int"
+	case "bool":
+		return "bool"
+	case "float32", "float64":
+		return "numeric"
+	case "net.IP":
+		return "inet"
+	case "time.Time":
+		return "timestamp"
+	case "time.Duration":
+		return "time"
+	default:
+		return ""
 	}
-
-	return ""
 }
 
 type Field struct {
@@ -62,33 +69,65 @@ func (m *Migrator) TableAlreadyExist(name string) (bool, error) {
 	return count > 0, err
 }
 
-// will run if we faced an error when creating the table
+type SchemaInfo struct {
+	ColName    interface{} `json:"column_name"`
+	DataType   interface{} `json:"data_type"`
+	CharMaxLen interface{} `json:"character_maximum_length"`
+	ColDefault interface{} `json:"column_default"`
+	IsNullable interface{} `json:"is_nullable"`
+}
+
+func getChangedFields(fields []Field, schema []SchemaInfo) {
+
+}
+
+/*
+	TODO:
+	- get table schema (cols, types, len....)
+	- compare to the given fields
+	- update changes
+*/
+// add columns, modify size, type... add constrains...
 func (m *Migrator) UpdateTable(name string, fields []Field) {
-
-	/*
-		TODO:
-		- get table schema (cols, types, len....)
-		- compare to the given fields
-		- update changes
-	*/
-	var detils []struct {
-		ColName    string
-		DataType   string
-		CharMaxLen string `json:"character_maximum_length"`
-		ColDefault string `json:"column_default"`
-		IsNullable string `json:"is_nullable"`
-	}
-	pgxscan.Select(context.Background(), m.conn, &detils, `
+	schema, _ := m.conn.Query(
+		context.Background(), `
 		SELECT column_name, data_type, character_maximum_length, column_default, is_nullable
-		FROM information_schema.columns WHERE table_name = $1
-	`, name)
+		FROM information_schema.columns WHERE table_name = $1`, name,
+	)
+	var schemaFields []SchemaInfo
+	for schema.Next() {
+		val, _ := schema.Values()
+		schemaFields = append(schemaFields, SchemaInfo{
+			ColName:    val[0],
+			DataType:   val[1],
+			CharMaxLen: val[2],
+			ColDefault: val[3],
+			IsNullable: val[4],
+		})
+	}
 
-	fmt.Println(detils)
-	// m.conn.Query(
-	// 	context.Background(),
-	// 	``,
-	// 	name,
-	// )
+	schemaLen := len(schemaFields)
+	fieldsLen := len(fields)
+
+	// new column to add
+	if fieldsLen > schemaLen {
+		// m.conn.QueryRow(
+		// 	context.Background(),
+		// 	`
+		// 	ALTER TABLE $1
+		// 	ADD COLUMN contact_name VARCHAR NOT NULL;
+		// 	`,
+		// )
+	}
+	// fmt.Println(len(schema.RawValues()), )
+	// for _, field := range fields {
+
+	// }
+
+	for schema.Next() {
+		val, _ := schema.Values()
+		fmt.Println(val[0], val[1], val[2], val[3], val[4])
+	}
 
 }
 
@@ -100,26 +139,27 @@ func (m *Migrator) CreateTable(name string, fields []Field) string {
 	*/
 
 	// generate create table sql
+	// ------------------------
 	sqlStr := fmt.Sprintf("CREATE TABLE %s ( \n", name)
-
 	for i, field := range fields {
-		canHaveSize := field.Ftype == "varbit" || field.Ftype == "char" || field.Ftype == "varchar" || field.Ftype == "decimal"
-		if canHaveSize {
+		switch field.Ftype {
+		// types that can have size
+		case "varbit", "char", "varchar", "decimal":
 			size := field.Size
 			if size == "" {
 				size = "255" // default size
 			}
-			sqlStr += fmt.Sprintf("%s %s(%s)", field.Name, field.Ftype, size)
-		} else {
-			sqlStr += fmt.Sprintf("%s %s", field.Name, field.Ftype)
+			sqlStr += fmt.Sprintf("%s %s(%s) NOT NULL", field.Name, field.Ftype, size)
+		default:
+			sqlStr += fmt.Sprintf("%s %s NOT NULL", field.Name, field.Ftype)
 		}
 
 		if i < len(fields)-1 {
 			sqlStr += ",\n"
 		}
 	}
-
 	sqlStr += "\n)"
+	// ------------------------
 
 	err := m.conn.QueryRow(context.Background(), sqlStr).Scan()
 
@@ -127,14 +167,14 @@ func (m *Migrator) CreateTable(name string, fields []Field) string {
 		fmt.Println("CREATE ERROR :", err)
 		m.UpdateTable(name, fields)
 	}
-	// fmt.Println(sqlStr)
 
 	return sqlStr
 
 }
 
+// return a nice table name
+// e.g: UserPayment => user_payments
 func NiceTableName(name string) string {
-	// e.g: TestTable => test_tables
 	s := strings.ToLower(string(name[0]))
 
 	for i := 1; i < len(name); i++ {
@@ -158,7 +198,7 @@ func NiceTableName(name string) string {
 	return s + pl
 }
 
-func (m *Migrator) AutoMigrate(schema interface{}) {
+func (m *Migrator) Migrate(schema interface{}) {
 	elem := reflect.ValueOf(schema).Elem()
 	tableName := reflect.TypeOf(schema).Elem().Name()
 	var fieldNames []Field
@@ -179,7 +219,8 @@ func (m *Migrator) AutoMigrate(schema interface{}) {
 		})
 	}
 
-	tbl := strings.ToLower(tableName) + "s"
+	tbl := NiceTableName(tableName)
+
 	exists, err := m.TableAlreadyExist(tbl)
 	if err != nil {
 		panic(err)
@@ -209,6 +250,6 @@ func main() {
 
 	m := Init(conn)
 
-	m.AutoMigrate(&Testo{})
+	m.Migrate(&Testo{})
 
 }
