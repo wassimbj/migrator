@@ -130,17 +130,35 @@ func (m *Migrator) AddCol(tbl string, f Field) error {
 func (m *Migrator) EditCol(tbl string, f Field) error {
 	// cast old values to the new type
 	// USING col_name::new_type
-	// nullStmt := "NOT NULL"
 
-	// if f.IsNullable {
-	// 	nullStmt = "NULL"
-	// }
-	sqlStr := fmt.Sprintf("ALTER TABLE %s", tbl)
+	sqlStr := fmt.Sprintf("ALTER TABLE %s \n", tbl)
 
+	// set data type
 	sqlStr += fmt.Sprintf(
-		" ALTER COLUMN %s TYPE %s",
+		"ALTER COLUMN %s TYPE %s, \n",
 		f.Name, getDataTypeWithSize(f.DataType, f.Size),
 	)
+
+	// set default value
+	if f.DefaultVal != "" {
+		sqlStr += fmt.Sprintf(
+			"ALTER COLUMN %s SET DEFAULT %s, \n",
+			f.Name, f.DefaultVal,
+		)
+	}
+
+	// set nullable
+	if f.IsNullable {
+		sqlStr += fmt.Sprintf(
+			"ALTER COLUMN %s DROP NOT NULL \n",
+			f.Name,
+		)
+	} else {
+		sqlStr += fmt.Sprintf(
+			"ALTER COLUMN %s SET NOT NULL \n",
+			f.Name,
+		)
+	}
 
 	err := m.conn.QueryRow(
 		context.Background(),
