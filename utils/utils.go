@@ -80,3 +80,23 @@ func GoToPgType(mtype string) string {
 		return ""
 	}
 }
+
+// convert data type name to alias (e.g: character varying => varchar)
+func PgTypeToAlias(mtype string) string {
+	switch mtype {
+	case "character":
+		return "char"
+	case "bit varying":
+		return "varbit"
+	case "boolean":
+		return "bool"
+	case "character varying":
+		return "varchar"
+	case "double precision":
+		return "float8"
+	case "integer":
+		return "int"
+	default:
+		return mtype
+	}
+}

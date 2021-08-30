@@ -31,26 +31,34 @@ func TableAlreadyExist(conn *pgxpool.Pool, name string) (bool, error) {
 }
 
 type ChangedField struct {
-	f     Field
-	isNew bool
+	f         Field
+	isChanged bool // if anything changed on this field
+	isNew     bool
 }
 
 // check and return new and old fields
 func GetChangedFields(fields []Field, schema []Field) []ChangedField {
 	var changedFields []ChangedField
 	var colExist bool = false
-
+	var isChanged bool = false
+	fmt.Println(fields)
+	fmt.Println(schema)
 	// check if fields exist on the database tables
 	for _, f := range fields {
 		for _, s := range schema {
 			if f.Name == s.Name {
 				colExist = true
+				// check if anything changed to update only the changed fields
+				if f.DataType != s.DataType || f.DefaultVal != s.DefaultVal || f.Size != s.Size || f.IsNullable != s.IsNullable {
+					isChanged = true
+				}
 				break
 			}
 		}
 		changedFields = append(changedFields, ChangedField{
-			f:     f,
-			isNew: !colExist,
+			f:         f,
+			isChanged: isChanged,
+			isNew:     !colExist,
 		})
 		colExist = false
 	}
@@ -58,6 +66,7 @@ func GetChangedFields(fields []Field, schema []Field) []ChangedField {
 	return changedFields
 }
 
+// add new column
 func AddCol(conn *pgxpool.Pool, tbl string, f Field) error {
 	sqlStr := fmt.Sprintf(
 		"ALTER TABLE %s ADD COLUMN %s",
@@ -78,6 +87,7 @@ func AddCol(conn *pgxpool.Pool, tbl string, f Field) error {
 	return nil
 }
 
+// edit column
 // https://www.postgresql.org/docs/9.1/sql-altertable.html
 func EditCol(conn *pgxpool.Pool, tbl string, f Field) error {
 	// cast old values to the new type
@@ -125,13 +135,16 @@ func EditCol(conn *pgxpool.Pool, tbl string, f Field) error {
 	return nil
 }
 
-// add columns, modify size, type... add constrains...
+// add columns, modify size, type...
 func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
+
+	// get table columns with type and other details
 	schema, _ := conn.Query(
 		context.Background(), `
 		SELECT column_name, data_type, character_maximum_length, column_default, is_nullable
 		FROM information_schema.columns WHERE table_name = $1`, name,
 	)
+
 	var schemaFields []Field
 	for schema.Next() {
 		val, _ := schema.Values()
@@ -145,7 +158,7 @@ func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 
 		schemaFields = append(schemaFields, Field{
 			Name:       val[0].(string),
-			DataType:   val[1].(string),
+			DataType:   utils.PgTypeToAlias(val[1].(string)),
 			Size:       size,
 			DefaultVal: defVal,
 			IsNullable: val[4] == "YES",
@@ -159,12 +172,14 @@ func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 				return err
 			}
 		} else {
-			fmt.Println("Editing col...")
-			err := EditCol(conn, name, cf.f)
+			if cf.isChanged {
+				fmt.Println("Editing col...")
+				err := EditCol(conn, name, cf.f)
 
-			if err != nil {
-				fmt.Println(err)
-				return err
+				if err != nil {
+					fmt.Println(err)
+					return err
+				}
 			}
 		}
 

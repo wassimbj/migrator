@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/wassimbj/migrator/queries"
@@ -20,6 +21,17 @@ func Init(conn *pgxpool.Pool) *Migrator {
 	}
 }
 
+func GetSchemaOption(opts []string, tag string) string {
+	for _, t := range opts {
+		splitTag := strings.Split(t, ":")
+		if strings.TrimSpace(splitTag[0]) == tag {
+			return strings.TrimSpace(splitTag[1])
+		}
+	}
+
+	return ""
+}
+
 func (m *Migrator) Migrate(schema interface{}) {
 	elem := reflect.ValueOf(schema).Elem()
 	tableName := reflect.TypeOf(schema).Elem().Name()
@@ -28,10 +40,13 @@ func (m *Migrator) Migrate(schema interface{}) {
 	for i := 0; i < elem.NumField(); i++ {
 		fieldName := elem.Type().Field(i).Name
 		field, _ := reflect.TypeOf(schema).Elem().FieldByName(fieldName)
-
-		colName := field.Tag.Get("col")
-		colSize := field.Tag.Get("size")
-		colType := field.Tag.Get("type")
+		// db:"col:test,"
+		dbTags := strings.Split(field.Tag.Get("db"), ",")
+		// fmt.Println(dbTags)
+		colName := GetSchemaOption(dbTags, "col")
+		colSize := GetSchemaOption(dbTags, "size")
+		colType := GetSchemaOption(dbTags, "type")
+		// fmt.Println(colName, colSize, colType)
 
 		fieldNames = append(fieldNames, queries.Field{
 			Name:     colName,
@@ -55,12 +70,12 @@ func (m *Migrator) Migrate(schema interface{}) {
 }
 
 type User struct {
-	Id          int    `col:"id" type:"int"`
-	Name        string `col:"name" type:"varchar" size:"30"`
-	Email       string `col:"email" type:"varchar" size:"100"`
-	Password    string `col:"password" type:"varchar" size:"20"`
-	ConfirmCode string `col:"confirm_code" type:"varchar" size:"6"`
-	CreatedAt   string `col:"created_at" type:"timestamp"`
+	Id          int    `db:"col:id,type:int"`
+	Name        string `db:"col:name,type:varchar,size:20"`
+	Email       string `db:"col:email,type:varchar,size:100"`
+	Password    string `db:"col:password,type:varchar,size:20"`
+	ConfirmCode string `db:"col:confirm_code,type:varchar,size:6"`
+	CreatedAt   string `db:"col:created_at,type:timestamp"`
 }
 
 func main() {
