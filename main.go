@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"unicode"
 
 	// "github.com/jackc/pgx/pgtype"
 
+	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 )
 
@@ -16,11 +18,23 @@ type Migrator struct {
 	conn *pgxpool.Pool
 }
 
+type Field struct {
+	Name       string
+	DataType   string
+	Size       string
+	DefaultVal string
+	IsNullable bool
+}
+
+// type SchemaInfo struct {
+// 	ColName    interface{}
+// 	DataType   interface{}
+// 	Size       interface{}
+// 	DefaultVal interface{}
+// 	IsNullable interface{}
+// }
+
 func Init(conn *pgxpool.Pool) *Migrator {
-	// conn, err := pgxpool.Connect(context.Background(), "postgres://root:12S34@localhost:5432/testdb")
-	// if err != nil {
-	// 	fmt.Println("DB_ERROR: ", err)
-	// }
 	return &Migrator{
 		conn: conn,
 	}
@@ -52,12 +66,6 @@ func GoToPgType(mtype string) string {
 	}
 }
 
-type Field struct {
-	Name  string
-	Ftype string
-	Size  string
-}
-
 func (m *Migrator) TableAlreadyExist(name string) (bool, error) {
 	var count int
 	err := m.conn.QueryRow(
@@ -69,24 +77,58 @@ func (m *Migrator) TableAlreadyExist(name string) (bool, error) {
 	return count > 0, err
 }
 
-type SchemaInfo struct {
-	ColName    interface{} `json:"column_name"`
-	DataType   interface{} `json:"data_type"`
-	CharMaxLen interface{} `json:"character_maximum_length"`
-	ColDefault interface{} `json:"column_default"`
-	IsNullable interface{} `json:"is_nullable"`
+type ChangedField struct {
+	f     Field
+	isNew bool
 }
 
-func getChangedFields(fields []Field, schema []SchemaInfo) {
+// check and return new and old fields
+func getChangedFields(fields []Field, schema []Field) []ChangedField {
+	var changedFields []ChangedField
+	var colExist bool = false
 
+	// check if fields exist on the database tables
+	for _, f := range fields {
+		for _, s := range schema {
+			if f.Name == s.Name {
+				colExist = true
+				break
+			}
+		}
+		changedFields = append(changedFields, ChangedField{
+			f:     f,
+			isNew: !colExist,
+		})
+		colExist = false
+	}
+
+	return changedFields
 }
 
-/*
-	TODO:
-	- get table schema (cols, types, len....)
-	- compare to the given fields
-	- update changes
-*/
+func (m *Migrator) AddCol(tbl string, f Field) error {
+	err := m.conn.QueryRow(
+		context.Background(),
+		"ALTER TABLE "+tbl+" ADD COLUMN "+colFmt(f),
+	).Scan()
+
+	if err != pgx.ErrNoRows {
+		return err
+	}
+	return nil
+}
+
+func (m *Migrator) EditCol(tbl string, f Field) error {
+	err := m.conn.QueryRow(
+		context.Background(),
+		"ALTER TABLE "+tbl+" ADD COLUMN "+colFmt(f),
+	).Scan()
+
+	if err != pgx.ErrNoRows {
+		return err
+	}
+	return nil
+}
+
 // add columns, modify size, type... add constrains...
 func (m *Migrator) UpdateTable(name string, fields []Field) {
 	schema, _ := m.conn.Query(
@@ -94,65 +136,76 @@ func (m *Migrator) UpdateTable(name string, fields []Field) {
 		SELECT column_name, data_type, character_maximum_length, column_default, is_nullable
 		FROM information_schema.columns WHERE table_name = $1`, name,
 	)
-	var schemaFields []SchemaInfo
+	var schemaFields []Field
 	for schema.Next() {
 		val, _ := schema.Values()
-		schemaFields = append(schemaFields, SchemaInfo{
-			ColName:    val[0],
-			DataType:   val[1],
-			CharMaxLen: val[2],
-			ColDefault: val[3],
-			IsNullable: val[4],
+		size := ""
+		defVal := ""
+		if val[2] != nil {
+			size = strconv.Itoa(int(val[2].(int32)))
+		} else if val[3] != nil {
+			defVal = val[3].(string)
+		}
+
+		schemaFields = append(schemaFields, Field{
+			Name:       val[0].(string),
+			DataType:   val[1].(string),
+			Size:       size,
+			DefaultVal: defVal,
+			IsNullable: val[4] == "YES",
 		})
 	}
 
-	schemaLen := len(schemaFields)
-	fieldsLen := len(fields)
+	for _, cf := range getChangedFields(fields, schemaFields) {
+		fmt.Println(cf)
+		if cf.isNew {
+			m.AddCol(name, cf.f)
+		} else {
+			fmt.Println("Editing col...")
+		}
 
-	// new column to add
-	if fieldsLen > schemaLen {
-		// m.conn.QueryRow(
-		// 	context.Background(),
-		// 	`
-		// 	ALTER TABLE $1
-		// 	ADD COLUMN contact_name VARCHAR NOT NULL;
-		// 	`,
-		// )
-	}
-	// fmt.Println(len(schema.RawValues()), )
-	// for _, field := range fields {
-
-	// }
-
-	for schema.Next() {
-		val, _ := schema.Values()
-		fmt.Println(val[0], val[1], val[2], val[3], val[4])
 	}
 
 }
 
-// https://www.postgresql.org/docs/9.1/sql-createtable.html
-func (m *Migrator) CreateTable(name string, fields []Field) string {
+// format col
+func colFmt(field Field) string {
 	/*
 	 types that can have size
 	 varbit [ (n) ], char [ (n) ], varchar [ (n) ], decimal [ (p, s) ]
 	*/
+	switch field.DataType {
+	// types that can have size
+	case "varbit", "char", "varchar", "decimal":
+		size := field.Size
+		if size == "" {
+			size = "255" // default size
+		}
+		return fmt.Sprintf("%s %s(%s) NOT NULL", field.Name, field.DataType, size)
+	default:
+		return fmt.Sprintf("%s %s NOT NULL", field.Name, field.DataType)
+	}
+}
+
+// https://www.postgresql.org/docs/9.1/sql-createtable.html
+func (m *Migrator) CreateTable(name string, fields []Field) string {
 
 	// generate create table sql
 	// ------------------------
 	sqlStr := fmt.Sprintf("CREATE TABLE %s ( \n", name)
 	for i, field := range fields {
-		switch field.Ftype {
-		// types that can have size
-		case "varbit", "char", "varchar", "decimal":
-			size := field.Size
-			if size == "" {
-				size = "255" // default size
-			}
-			sqlStr += fmt.Sprintf("%s %s(%s) NOT NULL", field.Name, field.Ftype, size)
-		default:
-			sqlStr += fmt.Sprintf("%s %s NOT NULL", field.Name, field.Ftype)
-		}
+		sqlStr += colFmt(field)
+		// switch field.DataType {
+		// // types that can have size
+		// case "varbit", "char", "varchar", "decimal":
+		// 	size := field.Size
+		// 	if size == "" {
+		// 		size = "255" // default size
+		// 	}
+		// 	sqlStr += fmt.Sprintf("%s %s(%s) NOT NULL", field.Name, field.DataType, size)
+		// default:
+		// 	sqlStr += fmt.Sprintf("%s %s NOT NULL", field.Name, field.DataType)
+		// }
 
 		if i < len(fields)-1 {
 			sqlStr += ",\n"
@@ -172,9 +225,9 @@ func (m *Migrator) CreateTable(name string, fields []Field) string {
 
 }
 
-// return a nice table name
-// e.g: UserPayment => user_payments
-func NiceTableName(name string) string {
+// convert Camel to snake case
+// e.g: UserPayment => user_payment(s)
+func CamelToSnakeCase(name string, addPl bool) string {
 	s := strings.ToLower(string(name[0]))
 
 	for i := 1; i < len(name); i++ {
@@ -186,23 +239,26 @@ func NiceTableName(name string) string {
 		}
 	}
 
-	// plural prefix
-	var pl string
+	if addPl {
+		// plural prefix
+		var pl string
 
-	switch string(s[len(name)-1]) {
-	case "s", "ss", "sh", "ch", "x", "z":
-		pl = "es"
-	default:
-		pl = "s"
+		switch string(s[len(name)-1]) {
+		case "s", "ss", "sh", "ch", "x", "z":
+			pl = "es"
+		default:
+			pl = "s"
+		}
+		return s + pl
 	}
-	return s + pl
+
+	return s
 }
 
 func (m *Migrator) Migrate(schema interface{}) {
 	elem := reflect.ValueOf(schema).Elem()
 	tableName := reflect.TypeOf(schema).Elem().Name()
 	var fieldNames []Field
-	fmt.Println("Tbl: ", NiceTableName(tableName))
 
 	for i := 0; i < elem.NumField(); i++ {
 		fieldName := elem.Type().Field(i).Name
@@ -213,13 +269,13 @@ func (m *Migrator) Migrate(schema interface{}) {
 		colType := field.Tag.Get("type")
 
 		fieldNames = append(fieldNames, Field{
-			Name:  colName,
-			Ftype: colType,
-			Size:  colSize,
+			Name:     colName,
+			DataType: colType,
+			Size:     colSize,
 		})
 	}
 
-	tbl := NiceTableName(tableName)
+	tbl := CamelToSnakeCase(tableName, true)
 
 	exists, err := m.TableAlreadyExist(tbl)
 	if err != nil {
@@ -234,9 +290,9 @@ func (m *Migrator) Migrate(schema interface{}) {
 }
 
 type Testo struct {
-	Id   int    `col:"id" type:"int"`
-	Name string `col:"name" type:"varchar" size:"30"`
-	// Email       string `col:"email" type:"varchar" size:"100"`
+	Id          int    `col:"id" type:"int"`
+	Name        string `col:"name" type:"varchar" size:"30"`
+	Email       string `col:"email" type:"varchar" size:"100"`
 	Password    string `col:"password" type:"varchar" size:"20"`
 	ConfirmCode string `col:"confirm_code" type:"varchar" size:"6"`
 }
