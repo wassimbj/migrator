@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"reflect"
 	"strconv"
 	"strings"
@@ -106,31 +107,56 @@ func getChangedFields(fields []Field, schema []Field) []ChangedField {
 }
 
 func (m *Migrator) AddCol(tbl string, f Field) error {
+	sqlStr := fmt.Sprintf(
+		"ALTER TABLE %s ADD COLUMN %s",
+		tbl,
+		fmt.Sprintf("%s %s NOT NULL", f.Name, getDataTypeWithSize(f.DataType, f.Size)),
+	)
 	err := m.conn.QueryRow(
 		context.Background(),
-		"ALTER TABLE "+tbl+" ADD COLUMN "+colFmt(f),
+		sqlStr,
 	).Scan()
 
-	if err != pgx.ErrNoRows {
+	if err != nil && err != pgx.ErrNoRows {
 		return err
 	}
+
+	log.Println(sqlStr)
+
 	return nil
 }
 
+// https://www.postgresql.org/docs/9.1/sql-altertable.html
 func (m *Migrator) EditCol(tbl string, f Field) error {
+	// cast old values to the new type
+	// USING col_name::new_type
+	// nullStmt := "NOT NULL"
+
+	// if f.IsNullable {
+	// 	nullStmt = "NULL"
+	// }
+	sqlStr := fmt.Sprintf("ALTER TABLE %s", tbl)
+
+	sqlStr += fmt.Sprintf(
+		" ALTER COLUMN %s TYPE %s",
+		f.Name, getDataTypeWithSize(f.DataType, f.Size),
+	)
+
 	err := m.conn.QueryRow(
 		context.Background(),
-		"ALTER TABLE "+tbl+" ADD COLUMN "+colFmt(f),
+		sqlStr,
 	).Scan()
 
-	if err != pgx.ErrNoRows {
+	if err != nil && err != pgx.ErrNoRows {
 		return err
 	}
+
+	log.Println(sqlStr)
 	return nil
 }
 
 // add columns, modify size, type... add constrains...
-func (m *Migrator) UpdateTable(name string, fields []Field) {
+func (m *Migrator) UpdateTable(name string, fields []Field) error {
 	schema, _ := m.conn.Query(
 		context.Background(), `
 		SELECT column_name, data_type, character_maximum_length, column_default, is_nullable
@@ -157,71 +183,65 @@ func (m *Migrator) UpdateTable(name string, fields []Field) {
 	}
 
 	for _, cf := range getChangedFields(fields, schemaFields) {
-		fmt.Println(cf)
 		if cf.isNew {
-			m.AddCol(name, cf.f)
+			err := m.AddCol(name, cf.f)
+			if err != nil {
+				return err
+			}
 		} else {
 			fmt.Println("Editing col...")
+			err := m.EditCol(name, cf.f)
+
+			if err != nil {
+				fmt.Println(err)
+				return err
+			}
 		}
 
 	}
 
+	return nil
 }
 
-// format col
-func colFmt(field Field) string {
-	/*
-	 types that can have size
-	 varbit [ (n) ], char [ (n) ], varchar [ (n) ], decimal [ (p, s) ]
-	*/
-	switch field.DataType {
-	// types that can have size
+/*
+ types that can have size
+ varbit [ (n) ], char [ (n) ], varchar [ (n) ], decimal [ (p, s) ]
+*/
+func getDataTypeWithSize(dataType string, size string) string {
+	switch dataType {
 	case "varbit", "char", "varchar", "decimal":
-		size := field.Size
-		if size == "" {
-			size = "255" // default size
+		s := size
+		if s == "" {
+			s = "255" // default size
 		}
-		return fmt.Sprintf("%s %s(%s) NOT NULL", field.Name, field.DataType, size)
+		return fmt.Sprintf("%s(%s)", dataType, s)
 	default:
-		return fmt.Sprintf("%s %s NOT NULL", field.Name, field.DataType)
+		return fmt.Sprintf("%s", dataType)
 	}
 }
 
 // https://www.postgresql.org/docs/9.1/sql-createtable.html
-func (m *Migrator) CreateTable(name string, fields []Field) string {
+func (m *Migrator) CreateTable(name string, fields []Field) error {
 
 	// generate create table sql
-	// ------------------------
 	sqlStr := fmt.Sprintf("CREATE TABLE %s ( \n", name)
 	for i, field := range fields {
-		sqlStr += colFmt(field)
-		// switch field.DataType {
-		// // types that can have size
-		// case "varbit", "char", "varchar", "decimal":
-		// 	size := field.Size
-		// 	if size == "" {
-		// 		size = "255" // default size
-		// 	}
-		// 	sqlStr += fmt.Sprintf("%s %s(%s) NOT NULL", field.Name, field.DataType, size)
-		// default:
-		// 	sqlStr += fmt.Sprintf("%s %s NOT NULL", field.Name, field.DataType)
-		// }
+		sqlStr += fmt.Sprintf("%s %s NOT NULL", field.Name, getDataTypeWithSize(field.DataType, field.Size))
 
 		if i < len(fields)-1 {
 			sqlStr += ",\n"
 		}
 	}
 	sqlStr += "\n)"
-	// ------------------------
 
 	err := m.conn.QueryRow(context.Background(), sqlStr).Scan()
 
-	if err != nil {
-		fmt.Println("CREATE ERROR :", err)
-		m.UpdateTable(name, fields)
+	if err != pgx.ErrNoRows {
+		return err
 	}
 
-	return sqlStr
+	log.Println(sqlStr)
+	return nil
 
 }
 
@@ -289,12 +309,13 @@ func (m *Migrator) Migrate(schema interface{}) {
 
 }
 
-type Testo struct {
+type User struct {
 	Id          int    `col:"id" type:"int"`
 	Name        string `col:"name" type:"varchar" size:"30"`
 	Email       string `col:"email" type:"varchar" size:"100"`
 	Password    string `col:"password" type:"varchar" size:"20"`
 	ConfirmCode string `col:"confirm_code" type:"varchar" size:"6"`
+	CreatedAt   string `col:"created_at" type:"timestamp"`
 }
 
 func main() {
@@ -306,6 +327,6 @@ func main() {
 
 	m := Init(conn)
 
-	m.Migrate(&Testo{})
+	m.Migrate(&User{})
 
 }
