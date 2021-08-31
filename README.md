@@ -46,7 +46,7 @@ func main() {
 
 ## TODO
 
-- [ ] Test queries
+- [x] Test queries
 - [ ] Add Auto Increment field
 - [ ] Add indexes
 - [ ] Add Primary keys

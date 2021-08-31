@@ -101,6 +101,8 @@ func PgTypeToAlias(mtype string) string {
 	}
 }
 
+// parse struct tags, and return tags value
+// opts = ["col:name", "type:varchar", ...], tag = type => varchar
 func GetSchemaOption(opts []string, tag string) string {
 	for _, t := range opts {
 		if strings.Contains(t, ":") {

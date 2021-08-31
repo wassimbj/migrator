@@ -24,6 +24,7 @@ type Field struct {
 	Ref        string // foreign key references
 }
 
+// check if table exist
 func TableAlreadyExist(conn *pgxpool.Pool, name string) (bool, error) {
 	var count int
 	err := conn.QueryRow(
@@ -141,6 +142,7 @@ func EditCol(conn *pgxpool.Pool, tbl string, f Field) error {
 }
 
 // add columns, modify size, type...
+// name: table name, fields: field that will be updated
 func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 
 	// get table columns with type and other details
@@ -192,7 +194,6 @@ func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 				err := EditCol(conn, name, cf.f)
 
 				if err != nil {
-					fmt.Println(err)
 					return err
 				}
 			}
