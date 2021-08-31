@@ -54,7 +54,7 @@ func TestUpdateTable(t *testing.T) {
 		{
 			Name:       "balance",
 			DataType:   "numeric", // changed
-			Size:       "10,2",    // changed
+			Size:       "6,2",     // changed
 			IsNullable: true,
 			DefaultVal: "0",
 		},

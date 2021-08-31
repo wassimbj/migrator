@@ -43,7 +43,7 @@ func CamelToSnakeCase(name string, addPl bool) string {
 func GetDataTypeWithSize(dataType string, size string) string {
 	// var x Field
 	switch dataType {
-	case "varbit", "char", "varchar", "decimal":
+	case "varbit", "char", "varchar", "decimal", "numeric":
 		s := size
 		if s == "" {
 			s = "255" // default size
