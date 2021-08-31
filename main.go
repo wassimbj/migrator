@@ -92,34 +92,3 @@ func (m *Migrator) Migrate(schema interface{}) {
 	}
 
 }
-
-// type User struct {
-// 	Id          int    `db:"col:id;type:int"`
-// 	Name        string `db:"col:name;type:varchar;size:20"`
-// 	Email       string `db:"col:email;type:varchar;size:100"`
-// 	Password    string `db:"col:password;type:varchar;size:20"`
-// 	ConfirmCode string `db:"col:confirm_code;type:varchar;size:6"`
-// 	CreatedAt   string `db:"col:created_at;type:timestamp"`
-// }
-
-// type Post struct {
-// 	Id        int    `db:"col:id;type:int"`
-// 	Title     string `db:"col:title;type:varchar;size:100"`
-// 	Content   string `db:"col:content;type:varchar;size:1000"`
-// 	UserId    string `db:"col:user_id;type:int;ref:users.id"`
-// 	CreatedAt string `db:"col:created_at;type:timestamp"`
-// }
-
-// func main() {
-
-// 	conn, err := pgxpool.Connect(context.Background(), "postgres://root:1234@localhost:5432/testdb")
-// 	if err != nil {
-// 		fmt.Println("DB_CONN_ERROR ", err)
-// 	}
-
-// 	m := Init(conn)
-
-// 	m.Migrate(&User{})
-// 	m.Migrate(&Post{})
-
-// }
