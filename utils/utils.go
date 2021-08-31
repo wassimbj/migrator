@@ -94,9 +94,20 @@ func PgTypeToAlias(mtype string) string {
 		return "varchar"
 	case "double precision":
 		return "float8"
-	case "integer":
+	case "integer", "int4":
 		return "int"
 	default:
 		return mtype
 	}
+}
+
+func GetSchemaOption(opts []string, tag string) string {
+	for _, t := range opts {
+		splitTag := strings.Split(t, ":")
+		if strings.TrimSpace(splitTag[0]) == tag {
+			return strings.TrimSpace(splitTag[1])
+		}
+	}
+
+	return ""
 }

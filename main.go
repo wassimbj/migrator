@@ -21,17 +21,31 @@ func Init(conn *pgxpool.Pool) *Migrator {
 	}
 }
 
-func GetSchemaOption(opts []string, tag string) string {
-	for _, t := range opts {
-		splitTag := strings.Split(t, ":")
-		if strings.TrimSpace(splitTag[0]) == tag {
-			return strings.TrimSpace(splitTag[1])
-		}
-	}
+/*
+TODO: Add Auto Increment field
+- for new cols
+CREATE SEQUENCE tablename_colname_seq;
+CREATE TABLE tablename (
+    colname integer NOT NULL DEFAULT nextval('tablename_colname_seq')
+);
+ALTER SEQUENCE tablename_colname_seq OWNED BY tablename.colname;
 
-	return ""
-}
+- for existing colss
+CREATE SEQUENCE my_serial AS integer START 1 OWNED BY address.new_id;
+ALTER TABLE address ALTER COLUMN new_id SET DEFAULT nextval('my_serial');
 
+
+TODO: Add indexes
+-- CREATE INDEX "users_email" ON "users" ("email");
+
+TODO: Add Primary keys
+
+TODO: Add Unique
+
+TODO: Add Foreign  Keys
+-- ALTER TABLE "posts"
+	ADD FOREIGN KEY ("user_id") REFERENCES "users" ("id")
+*/
 func (m *Migrator) Migrate(schema interface{}) {
 	elem := reflect.ValueOf(schema).Elem()
 	tableName := reflect.TypeOf(schema).Elem().Name()
@@ -40,13 +54,11 @@ func (m *Migrator) Migrate(schema interface{}) {
 	for i := 0; i < elem.NumField(); i++ {
 		fieldName := elem.Type().Field(i).Name
 		field, _ := reflect.TypeOf(schema).Elem().FieldByName(fieldName)
-		// db:"col:test,"
 		dbTags := strings.Split(field.Tag.Get("db"), ",")
-		// fmt.Println(dbTags)
-		colName := GetSchemaOption(dbTags, "col")
-		colSize := GetSchemaOption(dbTags, "size")
-		colType := GetSchemaOption(dbTags, "type")
-		// fmt.Println(colName, colSize, colType)
+
+		colName := utils.GetSchemaOption(dbTags, "col")
+		colSize := utils.GetSchemaOption(dbTags, "size")
+		colType := utils.GetSchemaOption(dbTags, "type")
 
 		fieldNames = append(fieldNames, queries.Field{
 			Name:     colName,
@@ -78,6 +90,14 @@ type User struct {
 	CreatedAt   string `db:"col:created_at,type:timestamp"`
 }
 
+type Post struct {
+	Id        int    `db:"col:id,type:int"`
+	Title     string `db:"col:title,type:varchar,size:100"`
+	Content   string `db:"col:content,type:varchar,size:1000"`
+	UserId    string `db:"col:user_id,type:int"`
+	CreatedAt string `db:"col:created_at,type:timestamp"`
+}
+
 func main() {
 
 	conn, err := pgxpool.Connect(context.Background(), "postgres://root:1234@localhost:5432/testdb")
@@ -88,5 +108,6 @@ func main() {
 	m := Init(conn)
 
 	m.Migrate(&User{})
+	m.Migrate(&Post{})
 
 }

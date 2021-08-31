@@ -41,13 +41,14 @@ func GetChangedFields(fields []Field, schema []Field) []ChangedField {
 	var changedFields []ChangedField
 	var colExist bool = false
 	var isChanged bool = false
-	fmt.Println(fields)
-	fmt.Println(schema)
+
 	// check if fields exist on the database tables
 	for _, f := range fields {
 		for _, s := range schema {
 			if f.Name == s.Name {
 				colExist = true
+				fmt.Println("FOUND: ", f.Name, f.DefaultVal, f.DataType)
+				fmt.Println(" 	", s.Name, s.DefaultVal, s.DataType)
 				// check if anything changed to update only the changed fields
 				if f.DataType != s.DataType || f.DefaultVal != s.DefaultVal || f.Size != s.Size || f.IsNullable != s.IsNullable {
 					isChanged = true
@@ -141,7 +142,7 @@ func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 	// get table columns with type and other details
 	schema, _ := conn.Query(
 		context.Background(), `
-		SELECT column_name, data_type, character_maximum_length, column_default, is_nullable
+		SELECT column_name, udt_name, character_maximum_length, column_default, is_nullable
 		FROM information_schema.columns WHERE table_name = $1`, name,
 	)
 
@@ -150,12 +151,17 @@ func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 		val, _ := schema.Values()
 		size := ""
 		defVal := ""
+		// fmt.Println("val[3]: ", val[3])
 		if val[2] != nil {
 			size = strconv.Itoa(int(val[2].(int32)))
 		} else if val[3] != nil {
+			// if val[3] == "without time zone" {
+			// 	val[3] = ""
+			// }
 			defVal = val[3].(string)
 		}
 
+		fmt.Println(defVal)
 		schemaFields = append(schemaFields, Field{
 			Name:       val[0].(string),
 			DataType:   utils.PgTypeToAlias(val[1].(string)),
@@ -173,7 +179,7 @@ func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 			}
 		} else {
 			if cf.isChanged {
-				fmt.Println("Editing col...")
+				// fmt.Println("Editing col...")
 				err := EditCol(conn, name, cf.f)
 
 				if err != nil {
@@ -209,6 +215,7 @@ func CreateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 	}
 
 	log.Println(sqlStr)
+
 	return nil
 
 }
