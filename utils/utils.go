@@ -103,9 +103,13 @@ func PgTypeToAlias(mtype string) string {
 
 func GetSchemaOption(opts []string, tag string) string {
 	for _, t := range opts {
-		splitTag := strings.Split(t, ":")
-		if strings.TrimSpace(splitTag[0]) == tag {
-			return strings.TrimSpace(splitTag[1])
+		if strings.Contains(t, ":") {
+			splitTag := strings.Split(t, ":")
+			if strings.TrimSpace(splitTag[0]) == tag {
+				return strings.TrimSpace(splitTag[1])
+			}
+		} else {
+			return "true" // some tags doesn't have ":"
 		}
 	}
 

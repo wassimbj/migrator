@@ -17,6 +17,11 @@ type Field struct {
 	Size       string
 	DefaultVal string
 	IsNullable bool
+	IsAutoIncr bool
+	Index      string
+	IsPk       bool
+	IsUnique   bool
+	Ref        string // foreign key references
 }
 
 func TableAlreadyExist(conn *pgxpool.Pool, name string) (bool, error) {
@@ -32,6 +37,7 @@ func TableAlreadyExist(conn *pgxpool.Pool, name string) (bool, error) {
 
 type ChangedField struct {
 	f         Field
+	changed   []string
 	isChanged bool // if anything changed on this field
 	isNew     bool
 }
@@ -47,8 +53,6 @@ func GetChangedFields(fields []Field, schema []Field) []ChangedField {
 		for _, s := range schema {
 			if f.Name == s.Name {
 				colExist = true
-				fmt.Println("FOUND: ", f.Name, f.DefaultVal, f.DataType)
-				fmt.Println(" 	", s.Name, s.DefaultVal, s.DataType)
 				// check if anything changed to update only the changed fields
 				if f.DataType != s.DataType || f.DefaultVal != s.DefaultVal || f.Size != s.Size || f.IsNullable != s.IsNullable {
 					isChanged = true
@@ -145,29 +149,35 @@ func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 		SELECT column_name, udt_name, character_maximum_length, column_default, is_nullable
 		FROM information_schema.columns WHERE table_name = $1`, name,
 	)
+	var schemaInfo struct {
+		colName    string
+		dataType   string
+		size       string
+		defaultVal string
+		isNull     bool
+	}
 
 	var schemaFields []Field
 	for schema.Next() {
 		val, _ := schema.Values()
-		size := ""
-		defVal := ""
-		// fmt.Println("val[3]: ", val[3])
+		schemaInfo.colName = val[0].(string)
+		schemaInfo.dataType = val[1].(string)
+		schemaInfo.size = ""
+		schemaInfo.defaultVal = ""
+		schemaInfo.isNull = val[4] == "YES"
+
 		if val[2] != nil {
-			size = strconv.Itoa(int(val[2].(int32)))
+			schemaInfo.size = strconv.Itoa(int(val[2].(int32)))
 		} else if val[3] != nil {
-			// if val[3] == "without time zone" {
-			// 	val[3] = ""
-			// }
-			defVal = val[3].(string)
+			schemaInfo.defaultVal = val[3].(string)
 		}
 
-		fmt.Println(defVal)
 		schemaFields = append(schemaFields, Field{
-			Name:       val[0].(string),
-			DataType:   utils.PgTypeToAlias(val[1].(string)),
-			Size:       size,
-			DefaultVal: defVal,
-			IsNullable: val[4] == "YES",
+			Name:       schemaInfo.colName,
+			DataType:   utils.PgTypeToAlias(schemaInfo.dataType),
+			Size:       schemaInfo.size,
+			DefaultVal: schemaInfo.defaultVal,
+			IsNullable: schemaInfo.isNull,
 		})
 	}
 
@@ -179,7 +189,6 @@ func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 			}
 		} else {
 			if cf.isChanged {
-				// fmt.Println("Editing col...")
 				err := EditCol(conn, name, cf.f)
 
 				if err != nil {
@@ -188,7 +197,6 @@ func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
 				}
 			}
 		}
-
 	}
 
 	return nil
