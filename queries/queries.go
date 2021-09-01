@@ -38,7 +38,6 @@ func TableAlreadyExist(conn *pgxpool.Pool, name string) (bool, error) {
 
 type ChangedField struct {
 	f         Field
-	changed   []string
 	isChanged bool // if anything changed on this field
 	isNew     bool
 }
@@ -141,48 +140,51 @@ func EditCol(conn *pgxpool.Pool, tbl string, f Field) error {
 	return nil
 }
 
-// add columns, modify size, type...
-// name: table name, fields: field that will be updated
-func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
-
-	// get table columns with type and other details
+// get schema info, col name, type, size, constraints..
+func GetSchemaInfo(conn *pgxpool.Pool, tbl string) []Field {
 	schema, _ := conn.Query(
 		context.Background(), `
 		SELECT column_name, udt_name, character_maximum_length, column_default, is_nullable
-		FROM information_schema.columns WHERE table_name = $1`, name,
+		FROM information_schema.columns
+		WHERE table_name = $1`, tbl,
 	)
-	var schemaInfo struct {
-		colName    string
-		dataType   string
-		size       string
-		defaultVal string
-		isNull     bool
-	}
 
+	var schemaInfo Field
 	var schemaFields []Field
+
+	// get schema_information fields
 	for schema.Next() {
 		val, _ := schema.Values()
-		schemaInfo.colName = val[0].(string)
-		schemaInfo.dataType = val[1].(string)
-		schemaInfo.size = ""
-		schemaInfo.defaultVal = ""
-		schemaInfo.isNull = val[4] == "YES"
+		schemaInfo.Name = val[0].(string)
+		schemaInfo.DataType = val[1].(string)
+		schemaInfo.Size = ""
+		schemaInfo.DefaultVal = ""
+		schemaInfo.IsNullable = val[4] == "YES"
 
 		if val[2] != nil {
-			schemaInfo.size = strconv.Itoa(int(val[2].(int32)))
+			schemaInfo.Size = strconv.Itoa(int(val[2].(int32)))
 		} else if val[3] != nil {
-			schemaInfo.defaultVal = val[3].(string)
+			schemaInfo.DefaultVal = val[3].(string)
 		}
 
 		schemaFields = append(schemaFields, Field{
-			Name:       schemaInfo.colName,
-			DataType:   utils.PgTypeToAlias(schemaInfo.dataType),
-			Size:       schemaInfo.size,
-			DefaultVal: schemaInfo.defaultVal,
-			IsNullable: schemaInfo.isNull,
+			Name:       schemaInfo.Name,
+			DataType:   utils.PgTypeToAlias(schemaInfo.DataType),
+			Size:       schemaInfo.Size,
+			DefaultVal: schemaInfo.DefaultVal,
+			IsNullable: schemaInfo.IsNullable,
 		})
 	}
 
+	return schemaFields
+
+}
+
+// modify size, type...
+// name: table name, fields: field that will be updated
+func UpdateTable(conn *pgxpool.Pool, name string, fields []Field) error {
+
+	schemaFields := GetSchemaInfo(conn, name)
 	for _, cf := range GetChangedFields(fields, schemaFields) {
 		if cf.isNew {
 			err := AddCol(conn, name, cf.f)

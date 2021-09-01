@@ -28,7 +28,7 @@ CREATE TABLE tablename (
 );
 ALTER SEQUENCE tablename_colname_seq OWNED BY tablename.colname;
 
-- for existing colss
+- for existing columns
 CREATE SEQUENCE my_serial AS integer START 1 OWNED BY address.new_id;
 ALTER TABLE address ALTER COLUMN new_id SET DEFAULT nextval('my_serial');
 
