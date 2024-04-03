@@ -1,5 +1,7 @@
 # Migrator - pgx auto migrator
 
+> This is a **WIP** and not ready for production, if you like the idea you are more then welcome to contribute
+
 ## Install
 
 ```bash
